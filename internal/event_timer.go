@@ -27,7 +27,7 @@ func NewEventTimer(task func()) *EventTimer {
 			select {
 
 			case <-c:
-				t.f()
+				go t.f()
 
 			case d, ok := <-t.reset:
 				if !ok {
