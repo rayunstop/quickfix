@@ -72,6 +72,32 @@ func (a *Acceptor) Start() error {
 	return nil
 }
 
+// ReloadSettings now only support to add new sessions
+func (a *Acceptor) ReloadSettings(settings *Settings) (err error) {
+	for sessionID, sessionSettings := range settings.SessionSettings() {
+		sessID := sessionID
+		if _, dup := a.sessions[sessID]; dup {
+			// found
+			continue
+		}
+
+		// new session
+		if a.sessions[sessID], err = a.createSession(sessionID, a.storeFactory, sessionSettings, a.logFactory, a.app); err != nil {
+			return err
+		}
+
+		// run session
+		session := a.sessions[sessID]
+		a.sessionGroup.Add(1)
+		go func() {
+			session.run()
+			a.sessionGroup.Done()
+		}()
+	}
+
+	return nil
+}
+
 //Stop logs out existing sessions, close their connections, and stop accepting new connections.
 func (a *Acceptor) Stop() {
 	defer func() {
