@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quickfixgo/quickfix/enum"
+	"github.com/quickfixgo/quickfix/datadictionary"
 	"github.com/quickfixgo/quickfix/internal"
 )
 
@@ -40,8 +40,11 @@ type session struct {
 
 	admin chan interface{}
 	internal.SessionSettings
+	transportDataDictionary *datadictionary.DataDictionary
+	appDataDictionary       *datadictionary.DataDictionary
 
 	messagePool
+	timestampPrecision TimestampPrecision
 }
 
 func (s *session) logError(err error) {
@@ -92,10 +95,10 @@ func (s *session) waitForInSessionTime() {
 func (s *session) insertSendingTime(msg *Message) {
 	sendingTime := time.Now().UTC()
 
-	if s.sessionID.BeginString >= enum.BeginStringFIX42 {
-		msg.Header.SetField(tagSendingTime, FIXUTCTimestamp{Time: sendingTime})
+	if s.sessionID.BeginString >= BeginStringFIX42 {
+		msg.Header.SetField(tagSendingTime, FIXUTCTimestamp{Time: sendingTime, Precision: s.timestampPrecision})
 	} else {
-		msg.Header.SetField(tagSendingTime, FIXUTCTimestamp{Time: sendingTime, NoMillis: true})
+		msg.Header.SetField(tagSendingTime, FIXUTCTimestamp{Time: sendingTime, Precision: Seconds})
 	}
 }
 
@@ -316,8 +319,10 @@ func (s *session) prepMessageForSend(msg *Message, inReplyTo *Message) (msgBytes
 }
 
 func (s *session) persist(seqNum int, msgBytes []byte) error {
-	if err := s.store.SaveMessage(seqNum, msgBytes); err != nil {
-		return err
+	if !s.DisableMessagePersist {
+		if err := s.store.SaveMessage(seqNum, msgBytes); err != nil {
+			return err
+		}
 	}
 
 	return s.store.IncrNextSenderMsgSeqNum()
@@ -350,7 +355,7 @@ func (s *session) sendResendRequest(beginSeq, endSeq int) (nextState resendState
 	nextState.resendRangeEnd = endSeq
 
 	resend := NewMessage()
-	resend.Header.SetField(tagMsgType, FIXString(enum.MsgType_RESEND_REQUEST))
+	resend.Header.SetBytes(tagMsgType, msgTypeResendRequest)
 	resend.Body.SetField(tagBeginSeqNo, FIXInt(beginSeq))
 
 	var endSeqNo int
@@ -363,7 +368,7 @@ func (s *session) sendResendRequest(beginSeq, endSeq int) (nextState resendState
 	if endSeqNo < endSeq {
 		nextState.currentResendRangeEnd = endSeqNo
 	} else {
-		if s.sessionID.BeginString < enum.BeginStringFIX42 {
+		if s.sessionID.BeginString < BeginStringFIX42 {
 			endSeqNo = 999999
 		} else {
 			endSeqNo = 0
@@ -381,7 +386,7 @@ func (s *session) sendResendRequest(beginSeq, endSeq int) (nextState resendState
 
 func (s *session) handleLogon(msg *Message) error {
 	//Grab default app ver id from fixt.1.1 logon
-	if s.sessionID.BeginString == enum.BeginStringFIXT11 {
+	if s.sessionID.BeginString == BeginStringFIXT11 {
 		var targetApplVerID FIXString
 
 		if err := msg.Body.GetField(tagDefaultApplVerID, &targetApplVerID); err != nil {
@@ -590,7 +595,7 @@ func (s *session) checkSendingTime(msg *Message) MessageRejectError {
 		return err
 	}
 
-	if delta := time.Since(sendingTime); delta <= -1*time.Duration(120)*time.Second || delta >= time.Duration(120)*time.Second {
+	if delta := time.Since(sendingTime); delta <= -1*s.MaxLatency || delta >= s.MaxLatency {
 		return sendingTimeAccuracyProblem()
 	}
 
@@ -611,7 +616,7 @@ func (s *session) checkBeginString(msg *Message) MessageRejectError {
 func (s *session) doReject(msg *Message, rej MessageRejectError) error {
 	reply := msg.reverseRoute()
 
-	if s.sessionID.BeginString >= enum.BeginStringFIX42 {
+	if s.sessionID.BeginString >= BeginStringFIX42 {
 
 		if rej.IsBusinessReject() {
 			reply.Header.SetField(tagMsgType, FIXString("j"))
@@ -621,7 +626,7 @@ func (s *session) doReject(msg *Message, rej MessageRejectError) error {
 			switch {
 			default:
 				reply.Body.SetField(tagSessionRejectReason, FIXInt(rej.RejectReason()))
-			case rej.RejectReason() > rejectReasonInvalidMsgType && s.sessionID.BeginString == enum.BeginStringFIX42:
+			case rej.RejectReason() > rejectReasonInvalidMsgType && s.sessionID.BeginString == BeginStringFIX42:
 				//fix42 knows up to invalid msg type
 			}
 
@@ -669,6 +674,12 @@ func (s *session) returnToPool(msg *Message) {
 
 func (s *session) onDisconnect() {
 	s.log.OnEvent("Disconnected")
+	if s.ResetOnDisconnect {
+		if err := s.dropAndReset(); err != nil {
+			s.logError(err)
+		}
+	}
+
 	if s.messageOut != nil {
 		close(s.messageOut)
 		s.messageOut = nil

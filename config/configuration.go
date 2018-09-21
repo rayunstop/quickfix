@@ -33,6 +33,7 @@ const (
 	ResetOnLogon                 string = "ResetOnLogon"
 	RefreshOnLogon               string = "RefreshOnLogon"
 	ResetOnLogout                string = "ResetOnLogout"
+	ResetOnDisconnect            string = "ResetOnDisconnect"
 	ReconnectInterval            string = "ReconnectInterval"
 	HeartBtInt                   string = "HeartBtInt"
 	FileLogPath                  string = "FileLogPath"
@@ -44,4 +45,8 @@ const (
 	ResendRequestChunkSize       string = "ResendRequestChunkSize"
 	EnableLastMsgSeqNumProcessed string = "EnableLastMsgSeqNumProcessed"
 	CheckLatency                 string = "CheckLatency"
+	TimeStampPrecision           string = "TimeStampPrecision"
+	MaxLatency                   string = "MaxLatency"
+	PersistMessages              string = "PersistMessages"
+	RejectInvalidMessage         string = "RejectInvalidMessage"
 )

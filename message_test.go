@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/quickfixgo/quickfix/enum"
+	"github.com/quickfixgo/quickfix/datadictionary"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -18,7 +18,7 @@ func BenchmarkParseMessage(b *testing.B) {
 }
 
 type MessageSuite struct {
-	suite.Suite
+	QuickFIXSuite
 	msg *Message
 }
 
@@ -28,6 +28,13 @@ func TestMessageSuite(t *testing.T) {
 
 func (s *MessageSuite) SetupTest() {
 	s.msg = NewMessage()
+}
+
+func (s *MessageSuite) TestParseMessageEmpty() {
+	rawMsg := bytes.NewBufferString("")
+
+	err := ParseMessage(s.msg, rawMsg)
+	s.NotNil(err)
 }
 
 func (s *MessageSuite) TestParseMessage() {
@@ -47,10 +54,30 @@ func (s *MessageSuite) TestParseMessage() {
 	msgType, err := s.msg.MsgType()
 	s.Nil(err)
 
-	s.Equal(enum.MsgType_ORDER_SINGLE, msgType)
-	s.True(s.msg.IsMsgTypeOf(enum.MsgType_ORDER_SINGLE))
+	s.Equal("D", msgType)
+	s.True(s.msg.IsMsgTypeOf("D"))
 
-	s.False(s.msg.IsMsgTypeOf(enum.MsgType_LOGON))
+	s.False(s.msg.IsMsgTypeOf("A"))
+}
+
+func (s *MessageSuite) TestParseMessageWithDataDictionary() {
+	dict := new(datadictionary.DataDictionary)
+	dict.Header = &datadictionary.MessageDef{
+		Fields: map[int]*datadictionary.FieldDef{
+			10030: nil,
+		},
+	}
+	dict.Trailer = &datadictionary.MessageDef{
+		Fields: map[int]*datadictionary.FieldDef{
+			5050: nil,
+		},
+	}
+	rawMsg := bytes.NewBufferString("8=FIX.4.29=12635=D34=249=TW52=20140515-19:49:56.65956=ISLD10030=CUST11=10021=140=154=155=TSLA60=00010101-00:00:00.0005050=HELLO10=039")
+
+	err := ParseMessageWithDataDictionary(s.msg, rawMsg, dict, dict)
+	s.Nil(err)
+	s.FieldEquals(Tag(10030), "CUST", s.msg.Header)
+	s.FieldEquals(Tag(5050), "HELLO", s.msg.Trailer)
 }
 
 func (s *MessageSuite) TestParseOutOfOrder() {
@@ -60,7 +87,7 @@ func (s *MessageSuite) TestParseOutOfOrder() {
 }
 
 func (s *MessageSuite) TestBuild() {
-	s.msg.Header.SetField(tagBeginString, FIXString(enum.BeginStringFIX44))
+	s.msg.Header.SetField(tagBeginString, FIXString(BeginStringFIX44))
 	s.msg.Header.SetField(tagMsgType, FIXString("A"))
 	s.msg.Header.SetField(tagSendingTime, FIXString("20140615-19:49:56"))
 
